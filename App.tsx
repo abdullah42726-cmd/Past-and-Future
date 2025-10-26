@@ -4,12 +4,13 @@
 */
 import React, { useState, ChangeEvent, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { generateDecadeImage } from './services/geminiService';
+import { generateEraImage } from './services/geminiService';
 import PolaroidCard from './components/PolaroidCard';
 import { createAlbumPage } from './lib/albumUtils';
-import Footer from './components/Footer';
 
-const DECADES = ['1950s', '1960s', '1970s', '1980s', '1990s', '2000s'];
+const PAST_DECADES = ['1950s', '1960s', '1970s', '1980s', '1990s', '2000s'];
+const FUTURE_ERAS = ['2050s', 'Solarpunk', 'Cyberpunk', 'Galactic Voyager', 'Post-Apocalyptic', '2200s Utopia'];
+
 
 // Pre-defined positions for a scattered look on desktop
 const POSITIONS = [
@@ -39,6 +40,7 @@ interface GeneratedImage {
 }
 
 const primaryButtonClasses = "font-permanent-marker text-xl text-center text-black bg-yellow-400 py-3 px-8 rounded-sm transform transition-transform duration-200 hover:scale-105 hover:-rotate-2 hover:bg-yellow-300 shadow-[2px_2px_0px_2px_rgba(0,0,0,0.2)]";
+const futuristicButtonClasses = "font-permanent-marker text-xl text-center text-white bg-purple-600 py-3 px-8 rounded-sm transform transition-transform duration-200 hover:scale-105 hover:rotate-2 hover:bg-purple-500 shadow-[2px_2px_0px_2px_rgba(0,0,0,0.2)]";
 const secondaryButtonClasses = "font-permanent-marker text-xl text-center text-white bg-white/10 backdrop-blur-sm border-2 border-white/80 py-3 px-8 rounded-sm transform transition-transform duration-200 hover:scale-105 hover:rotate-2 hover:bg-white hover:text-black";
 
 const useMediaQuery = (query: string) => {
@@ -60,7 +62,8 @@ function App() {
     const [generatedImages, setGeneratedImages] = useState<Record<string, GeneratedImage>>({});
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [isDownloading, setIsDownloading] = useState<boolean>(false);
-    const [appState, setAppState] = useState<'idle' | 'image-uploaded' | 'generating' | 'results-shown'>('idle');
+    const [timeDirection, setTimeDirection] = useState<'past' | 'future' | null>(null);
+    const [appState, setAppState] = useState<'selecting' | 'ready-to-upload' | 'image-uploaded' | 'generating' | 'results-shown'>('selecting');
     const dragAreaRef = useRef<HTMLDivElement>(null);
     const isMobile = useMediaQuery('(max-width: 768px)');
 
@@ -83,39 +86,43 @@ function App() {
 
         setIsLoading(true);
         setAppState('generating');
+        const erasToGenerate = timeDirection === 'past' ? PAST_DECADES : FUTURE_ERAS;
         
         const initialImages: Record<string, GeneratedImage> = {};
-        DECADES.forEach(decade => {
-            initialImages[decade] = { status: 'pending' };
+        erasToGenerate.forEach(era => {
+            initialImages[era] = { status: 'pending' };
         });
         setGeneratedImages(initialImages);
 
-        const concurrencyLimit = 2; // Process two decades at a time
-        const decadesQueue = [...DECADES];
+        const concurrencyLimit = 2; // Process two eras at a time
+        const erasQueue = [...erasToGenerate];
 
-        const processDecade = async (decade: string) => {
+        const processEra = async (era: string) => {
             try {
-                const prompt = `Reimagine the person in this photo in the style of the ${decade}. This includes clothing, hairstyle, photo quality, and the overall aesthetic of that decade. The output must be a photorealistic image showing the person clearly.`;
-                const resultUrl = await generateDecadeImage(uploadedImage, prompt);
+                const prompt = timeDirection === 'past'
+                    ? `Reimagine the person in this photo in the style of the ${era}. This includes clothing, hairstyle, photo quality, and the overall aesthetic of that decade. The output must be a photorealistic image showing the person clearly.`
+                    : `Reimagine the person in this photo in a futuristic ${era} style. This includes clothing, technology, hairstyle, and the overall aesthetic of that era. The output must be a high-quality, imaginative image showing the person clearly.`;
+
+                const resultUrl = await generateEraImage(uploadedImage, prompt, era);
                 setGeneratedImages(prev => ({
                     ...prev,
-                    [decade]: { status: 'done', url: resultUrl },
+                    [era]: { status: 'done', url: resultUrl },
                 }));
             } catch (err) {
                 const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
                 setGeneratedImages(prev => ({
                     ...prev,
-                    [decade]: { status: 'error', error: errorMessage },
+                    [era]: { status: 'error', error: errorMessage },
                 }));
-                console.error(`Failed to generate image for ${decade}:`, err);
+                console.error(`Failed to generate image for ${era}:`, err);
             }
         };
 
         const workers = Array(concurrencyLimit).fill(null).map(async () => {
-            while (decadesQueue.length > 0) {
-                const decade = decadesQueue.shift();
-                if (decade) {
-                    await processDecade(decade);
+            while (erasQueue.length > 0) {
+                const era = erasQueue.shift();
+                if (era) {
+                    await processEra(era);
                 }
             }
         });
@@ -126,52 +133,57 @@ function App() {
         setAppState('results-shown');
     };
 
-    const handleRegenerateDecade = async (decade: string) => {
+    const handleRegenerateEra = async (era: string) => {
         if (!uploadedImage) return;
 
-        // Prevent re-triggering if a generation is already in progress
-        if (generatedImages[decade]?.status === 'pending') {
-            return;
-        }
+        if (generatedImages[era]?.status === 'pending') return;
         
-        console.log(`Regenerating image for ${decade}...`);
+        console.log(`Regenerating image for ${era}...`);
 
-        // Set the specific decade to 'pending' to show the loading spinner
-        setGeneratedImages(prev => ({
-            ...prev,
-            [decade]: { status: 'pending' },
-        }));
+        setGeneratedImages(prev => ({ ...prev, [era]: { status: 'pending' } }));
 
-        // Call the generation service for the specific decade
         try {
-            const prompt = `Reimagine the person in this photo in the style of the ${decade}. This includes clothing, hairstyle, photo quality, and the overall aesthetic of that decade. The output must be a photorealistic image showing the person clearly.`;
-            const resultUrl = await generateDecadeImage(uploadedImage, prompt);
-            setGeneratedImages(prev => ({
-                ...prev,
-                [decade]: { status: 'done', url: resultUrl },
-            }));
+            const prompt = timeDirection === 'past'
+                ? `Reimagine the person in this photo in the style of the ${era}. This includes clothing, hairstyle, photo quality, and the overall aesthetic of that decade. The output must be a photorealistic image showing the person clearly.`
+                : `Reimagine the person in this photo in a futuristic ${era} style. This includes clothing, technology, hairstyle, and the overall aesthetic of that era. The output must be a high-quality, imaginative image showing the person clearly.`;
+            
+            const resultUrl = await generateEraImage(uploadedImage, prompt, era);
+            setGeneratedImages(prev => ({ ...prev, [era]: { status: 'done', url: resultUrl } }));
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
-            setGeneratedImages(prev => ({
-                ...prev,
-                [decade]: { status: 'error', error: errorMessage },
-            }));
-            console.error(`Failed to regenerate image for ${decade}:`, err);
+            setGeneratedImages(prev => ({ ...prev, [era]: { status: 'error', error: errorMessage } }));
+            console.error(`Failed to regenerate image for ${era}:`, err);
         }
     };
     
     const handleReset = () => {
         setUploadedImage(null);
         setGeneratedImages({});
-        setAppState('idle');
+        setAppState('selecting');
+        setTimeDirection(null);
     };
 
-    const handleDownloadIndividualImage = (decade: string) => {
-        const image = generatedImages[decade];
+    const handleDirectionSelect = (direction: 'past' | 'future') => {
+        setTimeDirection(direction);
+        setAppState('ready-to-upload');
+    };
+
+    const handleGoBackToSelection = () => {
+        setAppState('selecting');
+        setTimeDirection(null);
+    };
+    
+    const handleChooseDifferentPhoto = () => {
+        setUploadedImage(null);
+        setAppState('ready-to-upload');
+    };
+
+    const handleDownloadIndividualImage = (era: string) => {
+        const image = generatedImages[era];
         if (image?.status === 'done' && image.url) {
             const link = document.createElement('a');
             link.href = image.url;
-            link.download = `past-forward-${decade}.jpg`;
+            link.download = `past-forward-${era}.jpg`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -181,14 +193,19 @@ function App() {
     const handleDownloadAlbum = async () => {
         setIsDownloading(true);
         try {
+            const eras = timeDirection === 'past' ? PAST_DECADES : FUTURE_ERAS;
             const imageData = Object.entries(generatedImages)
-                .filter(([, image]) => image.status === 'done' && image.url)
+                // FIX: Explicitly typed the `entry` parameter to resolve a TypeScript error where its type was not correctly inferred.
+                .filter(
+                    (entry: [string, GeneratedImage]): entry is [string, GeneratedImage & { status: 'done'; url: string }] =>
+                        entry[1].status === 'done' && !!entry[1].url
+                )
                 .reduce((acc, [decade, image]) => {
-                    acc[decade] = image!.url!;
+                    acc[decade] = image.url;
                     return acc;
                 }, {} as Record<string, string>);
 
-            if (Object.keys(imageData).length < DECADES.length) {
+            if (Object.keys(imageData).length < eras.length) {
                 alert("Please wait for all images to finish generating before downloading the album.");
                 return;
             }
@@ -210,55 +227,68 @@ function App() {
         }
     };
 
+    const eras = timeDirection === 'past' ? PAST_DECADES : FUTURE_ERAS;
+
     return (
-        <main className="bg-black text-neutral-200 min-h-screen w-full flex flex-col items-center justify-center p-4 pb-24 overflow-hidden relative">
+        <main className="bg-black text-neutral-200 min-h-screen w-full flex flex-col items-center justify-center p-4 overflow-hidden relative">
             <div className="absolute top-0 left-0 w-full h-full bg-grid-white/[0.05]"></div>
             
             <div className="z-10 flex flex-col items-center justify-center w-full h-full flex-1 min-h-0">
                 <div className="text-center mb-10">
                     <h1 className="text-6xl md:text-8xl font-caveat font-bold text-neutral-100">Past Forward</h1>
-                    <p className="font-permanent-marker text-neutral-300 mt-2 text-xl tracking-wide">Generate yourself through the decades.</p>
+                    <p className="font-permanent-marker text-neutral-300 mt-2 text-xl tracking-wide">A journey through time, reimagined.</p>
                 </div>
 
-                {appState === 'idle' && (
+                {appState === 'selecting' && (
+                     <motion.div
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.5, type: 'spring' }}
+                        className="flex flex-col items-center gap-6"
+                    >
+                        <button onClick={() => handleDirectionSelect('past')} className={primaryButtonClasses}>
+                            Explore the Past
+                        </button>
+                        <button onClick={() => handleDirectionSelect('future')} className={futuristicButtonClasses}>
+                            Venture to the Future
+                        </button>
+                    </motion.div>
+                )}
+
+                {appState === 'ready-to-upload' && (
                      <div className="relative flex flex-col items-center justify-center w-full">
-                        {/* Ghost polaroids for intro animation */}
                         {GHOST_POLAROIDS_CONFIG.map((config, index) => (
                              <motion.div
                                 key={index}
                                 className="absolute w-80 h-[26rem] rounded-md p-4 bg-neutral-100/10 blur-sm"
                                 initial={config.initial}
-                                animate={{
-                                    x: "0%", y: "0%", rotate: (Math.random() - 0.5) * 20,
-                                    scale: 0,
-                                    opacity: 0,
-                                }}
-                                transition={{
-                                    ...config.transition,
-                                    ease: "circOut",
-                                    duration: 2,
-                                }}
+                                animate={{ x: "0%", y: "0%", rotate: (Math.random() - 0.5) * 20, scale: 0, opacity: 0 }}
+                                transition={{ ...config.transition, ease: "circOut", duration: 2 }}
                             />
                         ))}
                         <motion.div
                              initial={{ opacity: 0, scale: 0.8 }}
                              animate={{ opacity: 1, scale: 1 }}
-                             transition={{ delay: 2, duration: 0.8, type: 'spring' }}
+                             transition={{ delay: 1, duration: 0.8, type: 'spring' }}
                              className="flex flex-col items-center"
                         >
                             <label htmlFor="file-upload" className="cursor-pointer group transform hover:scale-105 transition-transform duration-300">
                                  <PolaroidCard 
-                                     caption="Click to begin"
+                                     caption={`Upload for your ${timeDirection} journey`}
                                      status="done"
                                  />
                             </label>
                             <input id="file-upload" type="file" className="hidden" accept="image/png, image/jpeg, image/webp" onChange={handleImageUpload} />
                             <p className="mt-8 font-permanent-marker text-neutral-500 text-center max-w-xs text-lg">
-                                Click the polaroid to upload your photo and start your journey through time.
+                                Click the polaroid to upload a photo.
                             </p>
+                             <button onClick={handleGoBackToSelection} className="mt-4 font-permanent-marker text-neutral-400 hover:text-white transition-colors">
+                                &larr; Go Back
+                            </button>
                         </motion.div>
                     </div>
                 )}
+
 
                 {appState === 'image-uploaded' && uploadedImage && (
                     <div className="flex flex-col items-center gap-6">
@@ -268,10 +298,10 @@ function App() {
                             status="done"
                          />
                          <div className="flex items-center gap-4 mt-4">
-                            <button onClick={handleReset} className={secondaryButtonClasses}>
+                            <button onClick={handleChooseDifferentPhoto} className={secondaryButtonClasses}>
                                 Different Photo
                             </button>
-                            <button onClick={handleGenerateClick} className={primaryButtonClasses}>
+                            <button onClick={handleGenerateClick} className={timeDirection === 'past' ? primaryButtonClasses : futuristicButtonClasses}>
                                 Generate
                             </button>
                          </div>
@@ -282,14 +312,14 @@ function App() {
                      <>
                         {isMobile ? (
                             <div className="w-full max-w-sm flex-1 overflow-y-auto mt-4 space-y-8 p-4">
-                                {DECADES.map((decade) => (
-                                    <div key={decade} className="flex justify-center">
+                                {eras.map((era) => (
+                                    <div key={era} className="flex justify-center">
                                          <PolaroidCard
-                                            caption={decade}
-                                            status={generatedImages[decade]?.status || 'pending'}
-                                            imageUrl={generatedImages[decade]?.url}
-                                            error={generatedImages[decade]?.error}
-                                            onShake={handleRegenerateDecade}
+                                            caption={era}
+                                            status={generatedImages[era]?.status || 'pending'}
+                                            imageUrl={generatedImages[era]?.url}
+                                            error={generatedImages[era]?.error}
+                                            onShake={handleRegenerateEra}
                                             onDownload={handleDownloadIndividualImage}
                                             isMobile={isMobile}
                                         />
@@ -298,29 +328,24 @@ function App() {
                             </div>
                         ) : (
                             <div ref={dragAreaRef} className="relative w-full max-w-5xl h-[600px] mt-4">
-                                {DECADES.map((decade, index) => {
-                                    const { top, left, rotate } = POSITIONS[index];
+                                {eras.map((era, index) => {
+                                    const { top, left, rotate } = POSITIONS[index % POSITIONS.length];
                                     return (
                                         <motion.div
-                                            key={decade}
+                                            key={era}
                                             className="absolute cursor-grab active:cursor-grabbing"
                                             style={{ top, left }}
                                             initial={{ opacity: 0, scale: 0.5, y: 100, rotate: 0 }}
-                                            animate={{ 
-                                                opacity: 1, 
-                                                scale: 1, 
-                                                y: 0,
-                                                rotate: `${rotate}deg`,
-                                            }}
+                                            animate={{ opacity: 1, scale: 1, y: 0, rotate: `${rotate}deg` }}
                                             transition={{ type: 'spring', stiffness: 100, damping: 20, delay: index * 0.15 }}
                                         >
                                             <PolaroidCard 
                                                 dragConstraintsRef={dragAreaRef}
-                                                caption={decade}
-                                                status={generatedImages[decade]?.status || 'pending'}
-                                                imageUrl={generatedImages[decade]?.url}
-                                                error={generatedImages[decade]?.error}
-                                                onShake={handleRegenerateDecade}
+                                                caption={era}
+                                                status={generatedImages[era]?.status || 'pending'}
+                                                imageUrl={generatedImages[era]?.url}
+                                                error={generatedImages[era]?.error}
+                                                onShake={handleRegenerateEra}
                                                 onDownload={handleDownloadIndividualImage}
                                                 isMobile={isMobile}
                                             />
@@ -335,7 +360,7 @@ function App() {
                                     <button 
                                         onClick={handleDownloadAlbum} 
                                         disabled={isDownloading} 
-                                        className={`${primaryButtonClasses} disabled:opacity-50 disabled:cursor-not-allowed`}
+                                        className={`${timeDirection === 'past' ? primaryButtonClasses : futuristicButtonClasses} disabled:opacity-50 disabled:cursor-not-allowed`}
                                     >
                                         {isDownloading ? 'Creating Album...' : 'Download Album'}
                                     </button>
@@ -348,7 +373,6 @@ function App() {
                     </>
                 )}
             </div>
-            <Footer />
         </main>
     );
 }

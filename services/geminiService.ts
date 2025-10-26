@@ -2,7 +2,8 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import { GoogleGenAI } from "@google/genai";
+// FIX: Imported `Modality` to correctly configure image generation requests.
+import { GoogleGenAI, Modality } from "@google/genai";
 import type { GenerateContentResponse } from "@google/genai";
 
 const API_KEY = process.env.API_KEY;
@@ -18,21 +19,11 @@ const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 /**
  * Creates a fallback prompt to use when the primary one is blocked.
- * @param decade The decade string (e.g., "1950s").
+ * @param era The era string (e.g., "1950s" or "Cyberpunk").
  * @returns The fallback prompt string.
  */
-function getFallbackPrompt(decade: string): string {
-    return `Create a photograph of the person in this image as if they were living in the ${decade}. The photograph should capture the distinct fashion, hairstyles, and overall atmosphere of that time period. Ensure the final image is a clear photograph that looks authentic to the era.`;
-}
-
-/**
- * Extracts the decade (e.g., "1950s") from a prompt string.
- * @param prompt The original prompt.
- * @returns The decade string or null if not found.
- */
-function extractDecade(prompt: string): string | null {
-    const match = prompt.match(/(\d{4}s)/);
-    return match ? match[1] : null;
+function getFallbackPrompt(era: string): string {
+    return `Create an image of the person in this photo as if they were in a ${era} setting. The image should capture the distinct fashion, technology, and overall atmosphere of that theme. Ensure the final image is a clear, high-quality image that looks authentic to the concept.`;
 }
 
 /**
@@ -65,9 +56,14 @@ async function callGeminiWithRetry(imagePart: object, textPart: object): Promise
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
+            // FIX: Added `responseModalities` to the config to ensure the model returns an image,
+            // as per Gemini API guidelines for image generation models.
             return await ai.models.generateContent({
                 model: 'gemini-2.5-flash-image',
                 contents: { parts: [imagePart, textPart] },
+                config: {
+                    responseModalities: [Modality.IMAGE],
+                },
             });
         } catch (error) {
             console.error(`Error calling Gemini API (Attempt ${attempt}/${maxRetries}):`, error);
@@ -89,13 +85,14 @@ async function callGeminiWithRetry(imagePart: object, textPart: object): Promise
 
 
 /**
- * Generates a decade-styled image from a source image and a prompt.
+ * Generates a styled image from a source image and a prompt based on a historical or futuristic era.
  * It includes a fallback mechanism for prompts that might be blocked in certain regions.
  * @param imageDataUrl A data URL string of the source image (e.g., 'data:image/png;base64,...').
  * @param prompt The prompt to guide the image generation.
+ * @param era The specific era (e.g., "1950s", "Cyberpunk") used for the fallback prompt.
  * @returns A promise that resolves to a base64-encoded image data URL of the generated image.
  */
-export async function generateDecadeImage(imageDataUrl: string, prompt: string): Promise<string> {
+export async function generateEraImage(imageDataUrl: string, prompt: string, era: string): Promise<string> {
   const match = imageDataUrl.match(/^data:(image\/\w+);base64,(.*)$/);
   if (!match) {
     throw new Error("Invalid image data URL format. Expected 'data:image/...;base64,...'");
@@ -108,7 +105,7 @@ export async function generateDecadeImage(imageDataUrl: string, prompt: string):
 
     // --- First attempt with the original prompt ---
     try {
-        console.log("Attempting generation with original prompt...");
+        console.log(`Attempting generation with original prompt for ${era}...`);
         const textPart = { text: prompt };
         const response = await callGeminiWithRetry(imagePart, textPart);
         return processGeminiResponse(response);
@@ -118,16 +115,11 @@ export async function generateDecadeImage(imageDataUrl: string, prompt: string):
 
         if (isNoImageError) {
             console.warn("Original prompt was likely blocked. Trying a fallback prompt.");
-            const decade = extractDecade(prompt);
-            if (!decade) {
-                console.error("Could not extract decade from prompt, cannot use fallback.");
-                throw error; // Re-throw the original "no image" error.
-            }
-
+            
             // --- Second attempt with the fallback prompt ---
             try {
-                const fallbackPrompt = getFallbackPrompt(decade);
-                console.log(`Attempting generation with fallback prompt for ${decade}...`);
+                const fallbackPrompt = getFallbackPrompt(era);
+                console.log(`Attempting generation with fallback prompt for ${era}...`);
                 const fallbackTextPart = { text: fallbackPrompt };
                 const fallbackResponse = await callGeminiWithRetry(imagePart, fallbackTextPart);
                 return processGeminiResponse(fallbackResponse);
